@@ -24,7 +24,7 @@
   });
 
   // Reveal on scroll
-  var targets = document.querySelectorAll('.section-head, .compare-col, .journey li, .service, .expert, .session, .pkg, .promises > div, .features, .faq, .contact-grid > *');
+  var targets = document.querySelectorAll('.section-head, .compare-col, .journey li, .service, .expert, .session, .pkg, .promises > div, .mv, .steps li, .dest > div, .excl > div, .faq, .contact-grid > *');
   if ('IntersectionObserver' in window) {
     var io = new IntersectionObserver(function (entries) {
       entries.forEach(function (en) {
@@ -34,31 +34,30 @@
     targets.forEach(function (el) { el.classList.add('reveal'); io.observe(el); });
   }
 
-  // Booking form
+  var y = document.getElementById('year');
+  if (y) y.textContent = new Date().getFullYear();
+
+  // Booking form (only on /book)
   var form = document.getElementById('book-form');
+  if (!form) return;
   var note = form.querySelector('.form-note');
-  var book = document.getElementById('book');
 
   function setSelect(name, value) {
     var sel = form.elements[name];
     for (var i = 0; i < sel.options.length; i++) {
-      if (sel.options[i].text === value) { sel.selectedIndex = i; sel.classList.remove('flash'); void sel.offsetWidth; sel.classList.add('flash'); return; }
+      var t = sel.options[i].text;
+      if (t === value || t.indexOf(value + ' (') === 0) {
+        sel.selectedIndex = i;
+        sel.classList.remove('flash'); void sel.offsetWidth; sel.classList.add('flash');
+        return;
+      }
     }
   }
-  function goToForm() {
-    book.scrollIntoView({ behavior: 'smooth' });
-    setTimeout(function () { form.elements.name.focus({ preventScroll: true }); }, 600);
-  }
 
-  document.querySelectorAll('[data-expert]').forEach(function (a) {
-    a.addEventListener('click', function () { setSelect('expert', a.getAttribute('data-expert')); });
-  });
-  document.querySelectorAll('[data-package]').forEach(function (a) {
-    a.addEventListener('click', function () { setSelect('session', 'Package: ' + a.getAttribute('data-package')); });
-  });
-  document.querySelectorAll('[data-session]').forEach(function (b) {
-    b.addEventListener('click', function () { setSelect('session', b.getAttribute('data-session')); goToForm(); });
-  });
+  // Pre-select from links like /book?session=...&expert=...
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('session')) setSelect('session', params.get('session'));
+  if (params.get('expert')) setSelect('expert', params.get('expert'));
 
   form.addEventListener('submit', function (e) {
     e.preventDefault();
@@ -96,7 +95,4 @@
       note.textContent = 'Thank you. WhatsApp should open with your request ready to send.';
     }
   });
-
-  var y = document.getElementById('year');
-  if (y) y.textContent = new Date().getFullYear();
 })();
