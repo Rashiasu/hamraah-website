@@ -10,8 +10,8 @@ SITE = "https://www.hamraahadvisors.com"
 BRAND = "Hamraah Advisors"
 LEGAL = "Hamraah Advisors (SMC-Private) Limited"
 EMAIL = "info@hamraahadvisors.com"
-WHATSAPP = "923001234567"          # placeholder until the real number is confirmed
-WHATSAPP_DISPLAY = "+92 300 123 4567"
+WHATSAPP = "923354471262"
+WHATSAPP_DISPLAY = "+92 335 4471262"
 ADDRESS = "Office 12, Business Avenue, Islamabad"  # placeholder
 TODAY = datetime.date.today().isoformat()
 

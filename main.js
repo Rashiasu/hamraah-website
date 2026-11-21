@@ -1,6 +1,6 @@
 (function () {
   // Contact details: update these when the real ones are confirmed.
-  var WHATSAPP = '923001234567';
+  var WHATSAPP = '923354471262';
   var EMAIL = 'info@hamraahadvisors.com';
 
   var header = document.querySelector('.site-header');
