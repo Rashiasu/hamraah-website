@@ -3,7 +3,7 @@
 Run:  python3 _build/build.py   (from the repo root)
 Edit content here, rebuild, commit the generated .html files.
 """
-import json, os, datetime, html
+import json, os, datetime, html, re, glob
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SITE = "https://www.hamraahadvisors.com"
@@ -23,6 +23,7 @@ NAV = [
     ("/pricing", "Pricing"),
     ("/about", "About"),
     ("/faq", "FAQ"),
+    ("/blog", "Blog"),
 ]
 
 # ---------------------------------------------------------------- data
@@ -284,9 +285,13 @@ WEBSITE = {"@type": "WebSite", "@id": SITE + "/#website", "url": SITE + "/", "na
 
 
 def breadcrumbs(path, name):
+    trail = [("Home", "/")]
+    if isinstance(name, tuple):  # (parent_name, parent_path, name)
+        trail.append((name[0], name[1]))
+        name = name[2]
+    trail.append((name, path))
     return {"@type": "BreadcrumbList", "itemListElement": [
-        {"@type": "ListItem", "position": 1, "name": "Home", "item": SITE + "/"},
-        {"@type": "ListItem", "position": 2, "name": name, "item": SITE + path}]}
+        {"@type": "ListItem", "position": i, "name": n, "item": SITE + u} for i, (n, u) in enumerate(trail, 1)]}
 
 
 def faq_schema(items):
@@ -305,10 +310,11 @@ def offers_schema():
 
 
 # ---------------------------------------------------------------- layout
-def layout(path, title, desc, body, schema=(), crumb=None):
+def layout(path, title, desc, body, schema=(), crumb=None, og_type="website", image=None):
     canonical = SITE + (path if path != "/" else "/")
     nav = "".join(
-        f'<a href="{href}"{" aria-current=\"page\"" if href == path else ""}>{label}</a>' for href, label in NAV)
+        f'<a href="{href}"{" aria-current=\"page\"" if href == path or (href != "/" and path.startswith(href + "/")) else ""}>{label}</a>' for href, label in NAV)
+    image = image or SITE + "/assets/og-image.jpg"
     graph = [ORG, WEBSITE] + list(schema)
     if crumb:
         graph.append(breadcrumbs(path, crumb))
@@ -327,20 +333,20 @@ def layout(path, title, desc, body, schema=(), crumb=None):
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="/assets/favicon-32.png" sizes="32x32" type="image/png">
   <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
-  <meta property="og:type" content="website">
+  <meta property="og:type" content="{og_type}">
   <meta property="og:site_name" content="{BRAND}">
   <meta property="og:locale" content="en_PK">
   <meta property="og:url" content="{canonical}">
   <meta property="og:title" content="{e(title)}">
   <meta property="og:description" content="{e(desc)}">
-  <meta property="og:image" content="{SITE}/assets/og-image.jpg">
+  <meta property="og:image" content="{image}">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="Hamraah Advisors crest and logo">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="{e(title)}">
   <meta name="twitter:description" content="{e(desc)}">
-  <meta name="twitter:image" content="{SITE}/assets/og-image.jpg">
+  <meta name="twitter:image" content="{image}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter:wght@400;500;600&family=Noto+Nastaliq+Urdu:wght@500&display=swap" rel="stylesheet">
@@ -595,17 +601,170 @@ def book():
     ])
 
 
+# ---------------------------------------------------------------- blog
+# Articles are Markdown files in _build/posts/. Each starts with a header block:
+#   ---
+#   title: Page title (also the H1)
+#   description: 150-160 character summary for Google
+#   date: 2026-11-23
+#   updated: 2026-11-23        (optional)
+#   category: USA visa
+#   cta_session: Visa interview mock session   (a SESSIONS key; the article's booking button)
+#   ---
+# Supported Markdown: ## and ### headings, paragraphs, - and 1. lists, **bold**, *italic*,
+# [links](url), > quotes, "!!! note" boxes (one paragraph), "[[cta]]" for a booking box.
+POSTS_DIR = os.path.join(ROOT, "_build", "posts")
+BLOG_PATH = "/blog"
+
+
+def _inline(t):
+    t = e(t, quote=False)
+    t = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", t)
+    t = re.sub(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?!\w)", r"<em>\1</em>", t)
+
+    def link(m):
+        text, url = m.group(1), m.group(2)
+        ext = url.startswith("http") and "hamraahadvisors.com" not in url
+        rel = ' target="_blank" rel="noopener"' if ext else ""
+        return f'<a href="{url}"{rel}>{text}</a>'
+    return re.sub(r"\[([^\]]+)\]\(([^)\s]+)\)", link, t)
+
+
+def slugify(t):
+    return re.sub(r"[^a-z0-9]+", "-", t.lower()).strip("-")
+
+
+def md_to_html(src, cta_html):
+    blocks, toc = [], []
+    for chunk in re.split(r"\n\s*\n", src.strip()):
+        lines = chunk.strip().split("\n")
+        first = lines[0]
+        if first.strip() == "[[cta]]":
+            blocks.append(cta_html)
+        elif first.startswith("### "):
+            blocks.append(f"<h3>{_inline(first[4:])}</h3>")
+        elif first.startswith("## "):
+            h = first[3:].strip()
+            sid = slugify(h)
+            toc.append((sid, h))
+            blocks.append(f'<h2 id="{sid}">{_inline(h)}</h2>')
+        elif first.startswith("!!! "):
+            label = first[4:].strip()
+            body = " ".join(l.strip() for l in lines[1:])
+            blocks.append(f'<aside class="callout"><p class="kicker">{e(label)}</p><p>{_inline(body)}</p></aside>')
+        elif first.startswith("> "):
+            blocks.append("<blockquote><p>" + _inline(" ".join(l[2:] for l in lines)) + "</p></blockquote>")
+        elif re.match(r"^(- |\d+\. )", first):
+            tag = "ol" if first[0].isdigit() else "ul"
+            items = []
+            for l in lines:
+                m = re.match(r"^(?:- |\d+\. )(.*)", l)
+                if m:
+                    items.append(m.group(1))
+                elif items:
+                    items[-1] += " " + l.strip()
+            blocks.append(f"<{tag}>" + "".join(f"<li>{_inline(i)}</li>" for i in items) + f"</{tag}>")
+        else:
+            blocks.append("<p>" + _inline(" ".join(l.strip() for l in lines)) + "</p>")
+    return "\n".join(blocks), toc
+
+
+def load_posts():
+    posts = []
+    for f in sorted(glob.glob(os.path.join(POSTS_DIR, "*.md"))):
+        raw = open(f, encoding="utf-8").read()
+        m = re.match(r"---\n(.*?)\n---\n(.*)", raw, re.S)
+        meta = dict(l.split(": ", 1) for l in m.group(1).strip().split("\n"))
+        meta["slug"] = os.path.splitext(os.path.basename(f))[0]
+        meta["body"] = m.group(2)
+        meta.setdefault("updated", meta["date"])
+        words = len(re.findall(r"\w+", meta["body"]))
+        meta["minutes"] = max(1, round(words / 220))
+        posts.append(meta)
+    posts.sort(key=lambda p: p["date"], reverse=True)
+    return posts
+
+
+def nice_date(d):
+    return datetime.date.fromisoformat(d).strftime("%-d %B %Y")
+
+
+def post_card(p):
+    return (f'<a class="post-card" href="{BLOG_PATH}/{p["slug"]}"><span class="kicker">{e(p["category"])}</span>'
+            f'<h3>{e(p["title"])}</h3><p>{e(p["description"])}</p>'
+            f'<span class="meta">{nice_date(p["date"])} · {p["minutes"]} min read</span><span class="go">Read article</span></a>')
+
+
+def article_cta(p):
+    key = p.get("cta_session", "30-minute consultation")
+    sess = next((s for s in SESSIONS if s[0] == key), SESSIONS[0])
+    q = sess[0].replace(" ", "+")
+    return (f'<aside class="article-cta"><p class="kicker">Talk to someone who has done it</p>'
+            f'<h3>{e(sess[1])} · {sess[2]} · ${sess[3]}</h3><p>{e(sess[4])} Our experts are Pakistanis living in the USA who went through this process themselves.</p>'
+            f'<div class="cta-row"><a class="btn btn-gold" href="/book?session={q}">Book this session</a>'
+            f'<a class="btn btn-outline" href="https://wa.me/{WHATSAPP}" target="_blank" rel="noopener">Ask on WhatsApp</a></div></aside>')
+
+
+def build_blog(posts):
+    out = []
+    for p in posts:
+        path = f"{BLOG_PATH}/{p['slug']}"
+        cta = article_cta(p)
+        body_html, toc = md_to_html(p["body"], cta)
+        toc_html = ('<nav class="toc" aria-label="In this article"><p class="kicker">In this article</p><ol>'
+                    + "".join(f'<li><a href="#{i}">{e(h)}</a></li>' for i, h in toc) + "</ol></nav>") if len(toc) > 2 else ""
+        related = [r for r in posts if r["slug"] != p["slug"]][:3]
+        updated = f' · Updated {nice_date(p["updated"])}' if p["updated"] != p["date"] else ""
+        hero = f'''<section class="hero page-hero article-hero"><div class="pattern" aria-hidden="true"></div>
+<div class="wrap"><nav class="crumbs" aria-label="Breadcrumb"><a href="/">Home</a><span aria-hidden="true">/</span><a href="{BLOG_PATH}">Blog</a><span aria-hidden="true">/</span><span aria-current="page">{e(p["category"])}</span></nav>
+<p class="eyebrow">{e(p["category"])}</p><h1>{e(p["title"])}</h1><p class="lede">{e(p["description"])}</p>
+<p class="article-meta">By the Hamraah Advisors team · {nice_date(p["date"])}{updated} · {p["minutes"]} min read</p></div></section>'''
+        article = (f'<section class="section"><div class="wrap article-wrap"><article class="prose">{toc_html}{body_html}'
+                   f'{cta}<p class="disclaimer">This article is general guidance, checked on {nice_date(p["updated"])}. Fees and rules change, so always confirm on the official website before you pay or apply. Visa decisions are made only by the embassy or consulate.</p></article></div></section>')
+        rel_html = section(section_head("Keep reading", "More guides for students") + f'<div class="post-grid">{"".join(post_card(r) for r in related)}</div>', "tint") if related else ""
+        schema = {"@type": "BlogPosting", "headline": p["title"], "description": p["description"],
+                  "datePublished": p["date"], "dateModified": p["updated"], "inLanguage": "en",
+                  "mainEntityOfPage": SITE + path, "image": SITE + "/assets/og-image.jpg",
+                  "author": {"@id": SITE + "/#organization"}, "publisher": {"@id": SITE + "/#organization"}}
+        title = p["title"] if len(p["title"]) > 50 else p["title"] + " | Hamraah Advisors"
+        html_out = layout(path, title, p["description"], "\n".join([hero, article, rel_html, cta_band()]),
+                          (schema,), ("Blog", BLOG_PATH, p["title"]), og_type="article")
+        out.append((os.path.join("blog", p["slug"] + ".html"), html_out, path, "0.7", p["updated"]))
+    # index
+    cats = sorted({p["category"] for p in posts})
+    index_body = "\n".join([
+        page_hero("Blog", "Guides for students <em>going abroad</em>",
+                  "Straight answers on US admissions, F-1 visas, costs, scholarships and studying in Europe, written by people who made the journey themselves.", "Blog"),
+        section(f'<p class="topics">Topics: {" · ".join(e(c) for c in cats)}</p><div class="post-grid">{"".join(post_card(p) for p in posts)}</div>'),
+        cta_band("Have a question an article can't answer?", "Book a 30-minute session", "/book?session=30-minute+consultation"),
+    ])
+    blog_schema = {"@type": "Blog", "@id": SITE + BLOG_PATH, "name": "Hamraah Advisors Blog", "url": SITE + BLOG_PATH,
+                   "publisher": {"@id": SITE + "/#organization"},
+                   "blogPost": [{"@type": "BlogPosting", "headline": p["title"], "url": f"{SITE}{BLOG_PATH}/{p['slug']}",
+                                 "datePublished": p["date"]} for p in posts]}
+    out.insert(0, ("blog/index.html", layout(BLOG_PATH, "Study Abroad Guides for Pakistani Students | Hamraah Blog",
+                   "Free guides on F-1 visa interviews, the cost of studying in the USA, scholarships, SOP writing and tuition-free study in Germany.",
+                   index_body, (blog_schema,), "Blog"), BLOG_PATH, "0.8", posts[0]["updated"] if posts else TODAY))
+    return out
+
+
 def build():
     urls = []
     for filename, (path, title, desc, fn, crumb, schema, priority) in PAGES.items():
         out = layout(path, title, desc, fn(), schema, crumb)
         with open(os.path.join(ROOT, filename), "w", encoding="utf-8") as f:
             f.write(out)
-        urls.append((path, priority))
+        urls.append((path, priority, TODAY))
         print("built", filename, f"title={len(title)}ch desc={len(desc)}ch")
+    os.makedirs(os.path.join(ROOT, "blog"), exist_ok=True)
+    for filename, out, path, priority, lastmod in build_blog(load_posts()):
+        with open(os.path.join(ROOT, filename), "w", encoding="utf-8") as f:
+            f.write(out)
+        urls.append((path, priority, lastmod))
+        print("built", filename)
     sm = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
-    for path, pr in urls:
-        sm.append(f"  <url><loc>{SITE}{path}</loc><lastmod>{TODAY}</lastmod><priority>{pr}</priority></url>")
+    for path, pr, lastmod in urls:
+        sm.append(f"  <url><loc>{SITE}{path}</loc><lastmod>{lastmod}</lastmod><priority>{pr}</priority></url>")
     sm.append("</urlset>")
     open(os.path.join(ROOT, "sitemap.xml"), "w").write("\n".join(sm) + "\n")
     open(os.path.join(ROOT, "robots.txt"), "w").write(f"User-agent: *\nAllow: /\n\nSitemap: {SITE}/sitemap.xml\n")
